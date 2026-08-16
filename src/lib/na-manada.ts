@@ -30,10 +30,21 @@ export const STORAGE_KEY = "na-manada:v1";
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
 
+let questionSource: Question[] = ALL_QUESTIONS;
+
+/**
+ * Replaces the bundled catalog when Supabase has an active remote catalog.
+ * Empty remote results are ignored so the app keeps working offline and during
+ * initial database setup.
+ */
+export function setQuestionSource(questions: Question[]) {
+  if (questions.length > 0) questionSource = questions;
+}
+
 export function poolFor(categoryId: string): Question[] {
   return categoryId === "aleatorio"
-    ? ALL_QUESTIONS
-    : ALL_QUESTIONS.filter((q) => q.categoryId === categoryId);
+    ? questionSource
+    : questionSource.filter((q) => q.categoryId === categoryId);
 }
 
 /** Picks an unused question; resets the used set for that pool when exhausted. */
@@ -138,4 +149,14 @@ export function vibrate(pattern: number | number[]) {
   } catch {
     /* not supported */
   }
+}
+
+// Load the Supabase catalog opportunistically in the browser. The bundled
+// catalog remains the source of truth whenever the remote catalog is empty or
+// unavailable, so a network/database issue never blocks a game.
+if (typeof window !== "undefined") {
+  void import("@/lib/remote-questions")
+    .then(({ fetchRemoteQuestions }) => fetchRemoteQuestions())
+    .then(setQuestionSource)
+    .catch(() => {});
 }
