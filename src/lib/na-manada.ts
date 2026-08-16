@@ -108,31 +108,79 @@ export function saveGame(g: GameState | null) {
   }
 }
 
+type AudioGraph = {
+  ctx: AudioContext;
+  master: GainNode;
+};
+
+let audioGraph: AudioGraph | null = null;
+
+function getAudioGraph(): AudioGraph | null {
+  if (typeof window === "undefined") return null;
+  if (audioGraph && audioGraph.ctx.state !== "closed") return audioGraph;
+
+  const Ctx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctx) return null;
+
+  const ctx = new Ctx();
+  const master = ctx.createGain();
+  const compressor = ctx.createDynamicsCompressor();
+
+  compressor.threshold.setValueAtTime(-20, ctx.currentTime);
+  compressor.knee.setValueAtTime(10, ctx.currentTime);
+  compressor.ratio.setValueAtTime(8, ctx.currentTime);
+  compressor.attack.setValueAtTime(0.002, ctx.currentTime);
+  compressor.release.setValueAtTime(0.12, ctx.currentTime);
+  master.gain.setValueAtTime(0.95, ctx.currentTime);
+  master.connect(compressor);
+  compressor.connect(ctx.destination);
+
+  audioGraph = { ctx, master };
+  return audioGraph;
+}
+
 /**
- * Party-room countdown sound: intentionally bright and compressed so it cuts
- * through conversation on a phone speaker. The final signal is a distinct
- * three-note pattern so "FALEM!" cannot be confused with the 3-2-1 ticks.
+ * iOS/Safari only allows WebAudio to become active from a real user gesture.
+ * We unlock once on a touch/click and keep the same AudioContext alive for the
+ * whole game, so the final "FALEM!" still plays several seconds later.
+ */
+export function unlockAudio() {
+  try {
+    const graph = getAudioGraph();
+    if (!graph) return;
+
+    const { ctx, master } = graph;
+    void ctx.resume().then(() => {
+      // A near-silent 15 ms pulse makes the unlock reliable on iOS Safari/PWA.
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const now = ctx.currentTime;
+      osc.frequency.setValueAtTime(440, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(now);
+      osc.stop(now + 0.015);
+    }).catch(() => {});
+  } catch {
+    /* audio not available */
+  }
+}
+
+/**
+ * Party-room countdown sound: bright and compressed for phone speakers.
+ * Uses the already-unlocked persistent AudioContext so mobile Safari cannot
+ * drop the final cue after the countdown.
  */
 export function playBeep(kind: "tick" | "go") {
   try {
-    const Ctx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
+    const graph = getAudioGraph();
+    if (!graph) return;
+    const { ctx, master } = graph;
 
-    const ctx = new Ctx();
-    void ctx.resume().catch(() => {});
-
-    const master = ctx.createGain();
-    const compressor = ctx.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-20, ctx.currentTime);
-    compressor.knee.setValueAtTime(10, ctx.currentTime);
-    compressor.ratio.setValueAtTime(8, ctx.currentTime);
-    compressor.attack.setValueAtTime(0.002, ctx.currentTime);
-    compressor.release.setValueAtTime(0.12, ctx.currentTime);
-    master.gain.setValueAtTime(0.95, ctx.currentTime);
-    master.connect(compressor);
-    compressor.connect(ctx.destination);
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 
     const tone = (
       frequency: number,
@@ -155,21 +203,18 @@ export function playBeep(kind: "tick" | "go") {
       osc.stop(start + duration + 0.01);
     };
 
-    const now = ctx.currentTime + 0.01;
+    const now = ctx.currentTime + 0.015;
 
     if (kind === "go") {
-      // BIP · BIP · BIIIIIP — clearly different from the countdown ticks.
-      tone(784, now, 0.17, 0.46);
-      tone(988, now + 0.21, 0.17, 0.5);
-      tone(1175, now + 0.42, 0.52, 0.58);
-      // Adds body on small phone speakers without muddying the main signal.
-      tone(587, now + 0.42, 0.52, 0.18, "triangle");
-      setTimeout(() => ctx.close().catch(() => {}), 1250);
+      // Mobile-first final cue: immediate strong tone + two rising accents.
+      // The first note starts immediately so iOS cannot miss a delayed-only cue.
+      tone(880, now, 0.28, 0.58);
+      tone(1175, now + 0.18, 0.3, 0.62);
+      tone(1568, now + 0.38, 0.62, 0.68);
+      tone(660, now + 0.38, 0.62, 0.22, "triangle");
     } else {
-      // Short, bright 3-2-1 tick that remains audible over people talking.
-      tone(988, now, 0.2, 0.42);
-      tone(1480, now + 0.008, 0.15, 0.13, "sine");
-      setTimeout(() => ctx.close().catch(() => {}), 500);
+      tone(988, now, 0.2, 0.46);
+      tone(1480, now + 0.008, 0.15, 0.15, "sine");
     }
   } catch {
     /* audio not available */
@@ -184,10 +229,17 @@ export function vibrate(pattern: number | number[]) {
   }
 }
 
-// Load the Supabase catalog opportunistically in the browser. The bundled
-// catalog remains the source of truth whenever the remote catalog is empty or
-// unavailable, so a network/database issue never blocks a game.
+// Unlock WebAudio from the first real gesture. This is intentionally installed
+// globally because the timer itself fires asynchronously several seconds later.
 if (typeof window !== "undefined") {
+  const unlockFromGesture = () => unlockAudio();
+  window.addEventListener("pointerdown", unlockFromGesture, { passive: true });
+  window.addEventListener("touchend", unlockFromGesture, { passive: true });
+  window.addEventListener("click", unlockFromGesture, { passive: true });
+
+  // Load the Supabase catalog opportunistically in the browser. The bundled
+  // catalog remains the source of truth whenever the remote catalog is empty or
+  // unavailable, so a network/database issue never blocks a game.
   void import("@/lib/remote-questions")
     .then(({ fetchRemoteQuestions }) => fetchRemoteQuestions())
     .then(setQuestionSource)
