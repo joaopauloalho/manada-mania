@@ -150,3 +150,13 @@ export function vibrate(pattern: number | number[]) {
     /* not supported */
   }
 }
+
+// Load the Supabase catalog opportunistically in the browser. The bundled
+// catalog remains the source of truth whenever the remote catalog is empty or
+// unavailable, so a network/database issue never blocks a game.
+if (typeof window !== "undefined") {
+  void import("@/lib/remote-questions")
+    .then(({ fetchRemoteQuestions }) => fetchRemoteQuestions())
+    .then(setQuestionSource)
+    .catch(() => {});
+}
