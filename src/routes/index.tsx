@@ -362,7 +362,7 @@ function RoundScreen({
   onExit: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("ready");
-  const [remaining, setRemaining] = useState(game.timerSec);
+  const [remaining, setRemaining] = useState<number>(game.timerSec);
   const [endAt, setEndAt] = useState<number | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [cowPick, setCowPick] = useState<string | null>(game.cowId);
