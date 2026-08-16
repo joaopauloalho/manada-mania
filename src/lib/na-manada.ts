@@ -1,0 +1,141 @@
+import { ALL_QUESTIONS } from "@/data/questions";
+
+export type Player = { id: string; name: string; score: number };
+
+export type Question = { id: string; text: string; categoryId: string };
+
+export type GameState = {
+  players: Player[];
+  cowId: string | null;
+  target: number;
+  timerSec: 5 | 10;
+  categoryId: string; // "aleatorio" or a category id
+  round: number;
+  question: Question | null;
+  usedIds: string[];
+  winnerId: string | null;
+  snapshot: Snapshot | null;
+};
+
+export type Snapshot = {
+  players: Player[];
+  cowId: string | null;
+  round: number;
+  question: Question | null;
+  usedIds: string[];
+  winnerId: string | null;
+};
+
+export const STORAGE_KEY = "na-manada:v1";
+
+export const uid = () => Math.random().toString(36).slice(2, 10);
+
+export function poolFor(categoryId: string): Question[] {
+  return categoryId === "aleatorio"
+    ? ALL_QUESTIONS
+    : ALL_QUESTIONS.filter((q) => q.categoryId === categoryId);
+}
+
+/** Picks an unused question; resets the used set for that pool when exhausted. */
+export function pickQuestion(
+  categoryId: string,
+  usedIds: string[],
+  excludeId?: string,
+): { question: Question; usedIds: string[] } {
+  const pool = poolFor(categoryId);
+  let used = usedIds;
+  let available = pool.filter((q) => !used.includes(q.id) && q.id !== excludeId);
+  if (available.length === 0) {
+    const poolIds = new Set(pool.map((q) => q.id));
+    used = used.filter((id) => !poolIds.has(id));
+    available = pool.filter((q) => q.id !== excludeId);
+  }
+  const question = available[Math.floor(Math.random() * available.length)]!;
+  return { question, usedIds: [...used, question.id] };
+}
+
+export function takeSnapshot(g: GameState): Snapshot {
+  return {
+    players: g.players.map((p) => ({ ...p })),
+    cowId: g.cowId,
+    round: g.round,
+    question: g.question,
+    usedIds: [...g.usedIds],
+    winnerId: g.winnerId,
+  };
+}
+
+/** Winner = a single eligible (no pink cow) player at/above target with the top score. */
+export function findWinner(players: Player[], cowId: string | null, target: number) {
+  const eligible = players.filter((p) => p.id !== cowId && p.score >= target);
+  if (eligible.length === 0) return null;
+  const max = Math.max(...eligible.map((p) => p.score));
+  const leaders = eligible.filter((p) => p.score === max);
+  return leaders.length === 1 ? leaders[0]!.id : null;
+}
+
+export function loadGame(): GameState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as GameState;
+    if (!parsed || !Array.isArray(parsed.players) || parsed.players.length === 0) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveGame(g: GameState | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (g) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(g));
+    else window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+export function playBeep(kind: "tick" | "go") {
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    const now = ctx.currentTime;
+    if (kind === "go") {
+      osc.frequency.setValueAtTime(660, now);
+      osc.frequency.exponentialRampToValueAtTime(990, now + 0.18);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.22, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+      osc.start(now);
+      osc.stop(now + 0.52);
+    } else {
+      osc.frequency.setValueAtTime(520, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+      osc.start(now);
+      osc.stop(now + 0.16);
+    }
+    setTimeout(() => ctx.close().catch(() => {}), 800);
+  } catch {
+    /* audio not available */
+  }
+}
+
+export function vibrate(pattern: number | number[]) {
+  try {
+    navigator.vibrate?.(pattern);
+  } catch {
+    /* not supported */
+  }
+}
