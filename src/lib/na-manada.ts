@@ -108,36 +108,69 @@ export function saveGame(g: GameState | null) {
   }
 }
 
+/**
+ * Party-room countdown sound: intentionally bright and compressed so it cuts
+ * through conversation on a phone speaker. The final signal is a distinct
+ * three-note pattern so "FALEM!" cannot be confused with the 3-2-1 ticks.
+ */
 export function playBeep(kind: "tick" | "go") {
   try {
     const Ctx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
+
     const ctx = new Ctx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = "sine";
-    const now = ctx.currentTime;
+    void ctx.resume().catch(() => {});
+
+    const master = ctx.createGain();
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-20, ctx.currentTime);
+    compressor.knee.setValueAtTime(10, ctx.currentTime);
+    compressor.ratio.setValueAtTime(8, ctx.currentTime);
+    compressor.attack.setValueAtTime(0.002, ctx.currentTime);
+    compressor.release.setValueAtTime(0.12, ctx.currentTime);
+    master.gain.setValueAtTime(0.95, ctx.currentTime);
+    master.connect(compressor);
+    compressor.connect(ctx.destination);
+
+    const tone = (
+      frequency: number,
+      start: number,
+      duration: number,
+      level: number,
+      type: OscillatorType = "square",
+    ) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(level, start + 0.012);
+      gain.gain.setValueAtTime(level, Math.max(start + 0.013, start + duration - 0.045));
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(start);
+      osc.stop(start + duration + 0.01);
+    };
+
+    const now = ctx.currentTime + 0.01;
+
     if (kind === "go") {
-      osc.frequency.setValueAtTime(660, now);
-      osc.frequency.exponentialRampToValueAtTime(990, now + 0.18);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.22, now + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
-      osc.start(now);
-      osc.stop(now + 0.52);
+      // BIP · BIP · BIIIIIP — clearly different from the countdown ticks.
+      tone(784, now, 0.17, 0.46);
+      tone(988, now + 0.21, 0.17, 0.5);
+      tone(1175, now + 0.42, 0.52, 0.58);
+      // Adds body on small phone speakers without muddying the main signal.
+      tone(587, now + 0.42, 0.52, 0.18, "triangle");
+      setTimeout(() => ctx.close().catch(() => {}), 1250);
     } else {
-      osc.frequency.setValueAtTime(520, now);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
-      osc.start(now);
-      osc.stop(now + 0.16);
+      // Short, bright 3-2-1 tick that remains audible over people talking.
+      tone(988, now, 0.2, 0.42);
+      tone(1480, now + 0.008, 0.15, 0.13, "sine");
+      setTimeout(() => ctx.close().catch(() => {}), 500);
     }
-    setTimeout(() => ctx.close().catch(() => {}), 800);
   } catch {
     /* audio not available */
   }
