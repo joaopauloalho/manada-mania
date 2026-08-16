@@ -28,7 +28,7 @@ export const Route = createFileRoute("/")({
       {
         property: "og:description",
         content:
-          "Pense como todo mundo. Ou fique fora da manada. Party game presencial, rápido e mobile-first.",
+          "Party game presencial para jogar no celular: perguntas, contagem regressiva, pontuação manual e a Vaca Rosa. Só o host precisa do site.",
       },
     ],
   }),
